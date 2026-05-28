@@ -1,5 +1,11 @@
 import React, { useMemo, useState } from 'react';
 
+async function loadJsonFromUrl(url: string): Promise<unknown> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch URL: ${res.status}`);
+  return res.json();
+}
+
 type WorkUnitEntity = {
   id: string;
   world: string;
@@ -26,6 +32,7 @@ export function App() {
   const [riskWeight, setRiskWeight] = useState(0.3);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.65);
   const [rawJson, setRawJson] = useState('');
+  const [jsonUrl, setJsonUrl] = useState('');
   const [workUnit, setWorkUnit] = useState<WorkUnit | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,13 +70,63 @@ export function App() {
     }
   };
 
+  const onLoadFromUrl = async () => {
+    try {
+      const parsed = (await loadJsonFromUrl(jsonUrl)) as WorkUnit;
+      if (!parsed || !parsed.id) {
+        setError('URL JSON does not look like a WorkUnit (missing id).');
+        return;
+      }
+      setRawJson(JSON.stringify(parsed, null, 2));
+      setWorkUnit(parsed);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const onLoadFromFile: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as WorkUnit;
+      if (!parsed || !parsed.id) {
+        setError('File JSON does not look like a WorkUnit (missing id).');
+        return;
+      }
+      setRawJson(JSON.stringify(parsed, null, 2));
+      setWorkUnit(parsed);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: 20 }}>
       <h1>Worldforge Instantiation Visualization</h1>
       <p>Calibration knobs + potential impact mesh view</p>
 
       <h2>Load WorkUnit JSON</h2>
-      <p>Paste JSON from realmforge /intent output or /demo/export-workunit file.</p>
+      <p>Paste JSON, load from URL, or import local .json exported by the backend.</p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+        <input
+          type='url'
+          value={jsonUrl}
+          onChange={(e) => setJsonUrl(e.target.value)}
+          placeholder='https://.../workunit.json'
+          style={{ flex: 1 }}
+        />
+        <button onClick={onLoadFromUrl} disabled={!jsonUrl.trim()}>Load from URL</button>
+        <label style={{ border: '1px solid #ccc', padding: '6px 10px', borderRadius: 6, cursor: 'pointer' }}>
+          Load file
+          <input type='file' accept='application/json,.json' onChange={onLoadFromFile} style={{ display: 'none' }} />
+        </label>
+      </div>
+
       <textarea
         value={rawJson}
         onChange={(e) => setRawJson(e.target.value)}
