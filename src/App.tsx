@@ -1,6 +1,20 @@
 import React, { useMemo, useState } from 'react';
 
-const sampleNodes = [
+type WorkUnitEntity = {
+  id: string;
+  world: string;
+  type: string;
+  name: string;
+  confidence?: number;
+};
+
+type WorkUnit = {
+  id: string;
+  title?: string;
+  impactSurface?: { entities?: WorkUnitEntity[] };
+};
+
+const fallbackNodes = [
   { id: 'code:modelPool.ts', world: 'code', risk: 0.6, impact: 0.8 },
   { id: 'runtime:p95_latency', world: 'runtime', risk: 0.3, impact: 0.9 },
   { id: 'user:login_wait', world: 'user', risk: 0.4, impact: 0.7 },
@@ -11,27 +25,74 @@ export function App() {
   const [impactWeight, setImpactWeight] = useState(0.7);
   const [riskWeight, setRiskWeight] = useState(0.3);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.65);
+  const [rawJson, setRawJson] = useState('');
+  const [workUnit, setWorkUnit] = useState<WorkUnit | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const parsedNodes = useMemo(() => {
+    const entities = workUnit?.impactSurface?.entities ?? [];
+    if (!entities.length) return [];
+    return entities.map((e) => ({
+      id: e.name,
+      world: e.world,
+      risk: 1 - (e.confidence ?? 0.65),
+      impact: 0.55 + Math.min(0.4, (e.confidence ?? 0.65) * 0.5)
+    }));
+  }, [workUnit]);
+
+  const baseNodes = parsedNodes.length ? parsedNodes : fallbackNodes;
 
   const ranked = useMemo(() => {
-    return [...sampleNodes]
+    return [...baseNodes]
       .map((n) => ({ ...n, score: n.impact * impactWeight - n.risk * riskWeight }))
       .filter((n) => n.score >= confidenceThreshold - 0.5)
       .sort((a, b) => b.score - a.score);
-  }, [impactWeight, riskWeight, confidenceThreshold]);
+  }, [baseNodes, impactWeight, riskWeight, confidenceThreshold]);
+
+  const onLoadJson = () => {
+    try {
+      const parsed = JSON.parse(rawJson) as WorkUnit;
+      if (!parsed || !parsed.id) {
+        setError('JSON does not look like a WorkUnit (missing id).');
+        return;
+      }
+      setWorkUnit(parsed);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: 20 }}>
       <h1>Worldforge Instantiation Visualization</h1>
-      <p>Calibration knobs + potential impact mesh view (MVP scaffold)</p>
+      <p>Calibration knobs + potential impact mesh view</p>
 
-      <div style={{ display: 'grid', gap: 10, maxWidth: 700 }}>
-        <label>Impact weight: {impactWeight.toFixed(2)}
+      <h2>Load WorkUnit JSON</h2>
+      <p>Paste JSON from realmforge /intent output or /demo/export-workunit file.</p>
+      <textarea
+        value={rawJson}
+        onChange={(e) => setRawJson(e.target.value)}
+        placeholder='{"id":"wu_...","impactSurface":{"entities":[...]}}'
+        style={{ width: '100%', minHeight: 140 }}
+      />
+      <div style={{ marginTop: 8 }}>
+        <button onClick={onLoadJson}>Load WorkUnit</button>
+      </div>
+      {error && <p style={{ color: 'crimson' }}>Error: {error}</p>}
+      {workUnit && <p>Loaded WorkUnit: <b>{workUnit.id}</b>{workUnit.title ? ` — ${workUnit.title}` : ''}</p>}
+
+      <div style={{ display: 'grid', gap: 10, maxWidth: 700, marginTop: 20 }}>
+        <label>
+          Impact weight: {impactWeight.toFixed(2)}
           <input type='range' min={0} max={1} step={0.01} value={impactWeight} onChange={(e) => setImpactWeight(Number(e.target.value))} />
         </label>
-        <label>Risk weight: {riskWeight.toFixed(2)}
+        <label>
+          Risk weight: {riskWeight.toFixed(2)}
           <input type='range' min={0} max={1} step={0.01} value={riskWeight} onChange={(e) => setRiskWeight(Number(e.target.value))} />
         </label>
-        <label>Confidence threshold: {confidenceThreshold.toFixed(2)}
+        <label>
+          Confidence threshold: {confidenceThreshold.toFixed(2)}
           <input type='range' min={0.4} max={0.95} step={0.01} value={confidenceThreshold} onChange={(e) => setConfidenceThreshold(Number(e.target.value))} />
         </label>
       </div>

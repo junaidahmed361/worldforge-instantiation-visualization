@@ -30,3 +30,11 @@ It focuses on interactive mesh exploration and trajectory impact comparison.
 npm install
 npm run dev
 ```
+
+
+## WorkUnit import flow (from backend)
+
+1) Generate a WorkUnit using `POST /intent` in the realmforge API.
+2) (Optional) Persist it via `POST /demo/export-workunit`.
+3) Paste the WorkUnit JSON into this UI textarea and click "Load WorkUnit".
+4) Tune calibration knobs to inspect ranked potential-impact entities.
