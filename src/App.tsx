@@ -28,6 +28,14 @@ type RankedNode = {
   score: number;
 };
 
+type GoalPreset = {
+  label: string;
+  impactWeight: number;
+  riskWeight: number;
+  confidenceThreshold: number;
+  description: string;
+};
+
 const sampleWorkUnit: WorkUnit = {
   id: 'wu_sample_001',
   title: 'Sample: TF->PyTorch migration impact work unit',
@@ -49,10 +57,44 @@ const fallbackNodes = [
   { id: 'business:onboarding_conversion', world: 'business', risk: 0.5, impact: 0.85 }
 ];
 
+const goalPresets: Record<string, GoalPreset> = {
+  balanced: {
+    label: 'Balanced delivery',
+    impactWeight: 0.7,
+    riskWeight: 0.3,
+    confidenceThreshold: 0.65,
+    description: 'General planning mode across impact and execution risk.'
+  },
+  growth: {
+    label: 'Growth / expansion',
+    impactWeight: 0.88,
+    riskWeight: 0.12,
+    confidenceThreshold: 0.58,
+    description: 'Bias toward upside opportunities, tolerate more uncertainty.'
+  },
+  reliability: {
+    label: 'Reliability / risk control',
+    impactWeight: 0.52,
+    riskWeight: 0.48,
+    confidenceThreshold: 0.76,
+    description: 'Bias toward safer bets and stronger evidence before action.'
+  },
+  adoption: {
+    label: 'Adoption / onboarding',
+    impactWeight: 0.78,
+    riskWeight: 0.22,
+    confidenceThreshold: 0.62,
+    description: 'Optimize for user activation and first-value experiences.'
+  }
+};
+
 export function App() {
   const [impactWeight, setImpactWeight] = useState(0.7);
   const [riskWeight, setRiskWeight] = useState(0.3);
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.65);
+  const [goalMode, setGoalMode] = useState<keyof typeof goalPresets>('balanced');
+  const [zoom, setZoom] = useState(1);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [rawJson, setRawJson] = useState('');
   const [jsonUrl, setJsonUrl] = useState('');
   const [workUnit, setWorkUnit] = useState<WorkUnit | null>(null);
@@ -101,6 +143,21 @@ export function App() {
     }
     return links;
   }, [meshNodes]);
+
+  const selectedNode = meshNodes.find((n) => n.id === selectedNodeId) ?? null;
+
+  const applyGoalPreset = (key: keyof typeof goalPresets) => {
+    const preset = goalPresets[key];
+    setGoalMode(key);
+    setImpactWeight(preset.impactWeight);
+    setRiskWeight(preset.riskWeight);
+    setConfidenceThreshold(preset.confidenceThreshold);
+  };
+
+  const zoomedWidth = meshWidth / zoom;
+  const zoomedHeight = meshHeight / zoom;
+  const zoomedX = (meshWidth - zoomedWidth) / 2;
+  const zoomedY = (meshHeight - zoomedHeight) / 2;
 
   const onLoadJson = () => {
     try {
@@ -192,26 +249,48 @@ export function App() {
       {error && <p style={{ color: 'crimson' }}>Error: {error}</p>}
       {workUnit && <p>Loaded WorkUnit: <b>{workUnit.id}</b>{workUnit.title ? ` — ${workUnit.title}` : ''}</p>}
 
-      <div style={{ display: 'grid', gap: 10, maxWidth: 700, marginTop: 20 }}>
+      <div style={{ display: 'grid', gap: 10, maxWidth: 860, marginTop: 20 }}>
         <label>
-          Impact weight: {impactWeight.toFixed(2)}
+          Business goal mode
+          <select
+            value={goalMode}
+            onChange={(e) => applyGoalPreset(e.target.value as keyof typeof goalPresets)}
+            style={{ marginLeft: 10 }}
+          >
+            {Object.entries(goalPresets).map(([key, preset]) => (
+              <option key={key} value={key}>{preset.label}</option>
+            ))}
+          </select>
+        </label>
+        <p style={{ margin: 0, color: '#3b4a66' }}>{goalPresets[goalMode].description}</p>
+
+        <label>
+          Upside emphasis (impact weight): {impactWeight.toFixed(2)}
           <input type='range' min={0} max={1} step={0.01} value={impactWeight} onChange={(e) => setImpactWeight(Number(e.target.value))} />
         </label>
         <label>
-          Risk weight: {riskWeight.toFixed(2)}
+          Execution risk sensitivity (risk weight): {riskWeight.toFixed(2)}
           <input type='range' min={0} max={1} step={0.01} value={riskWeight} onChange={(e) => setRiskWeight(Number(e.target.value))} />
         </label>
         <label>
-          Confidence threshold: {confidenceThreshold.toFixed(2)}
+          Evidence strictness (confidence threshold): {confidenceThreshold.toFixed(2)}
           <input type='range' min={0.4} max={0.95} step={0.01} value={confidenceThreshold} onChange={(e) => setConfidenceThreshold(Number(e.target.value))} />
         </label>
       </div>
 
       <h2>Potential impact mesh (ranked entities)</h2>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+        <button onClick={() => setZoom((z) => Math.max(1, Number((z - 0.2).toFixed(2))))}>-</button>
+        <span>Zoom: {zoom.toFixed(1)}x</span>
+        <button onClick={() => setZoom((z) => Math.min(3, Number((z + 0.2).toFixed(2))))}>+</button>
+        <input type='range' min={1} max={3} step={0.1} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} style={{ width: 180 }} />
+        <span style={{ color: '#5a6a88' }}>Click a node to inspect details</span>
+      </div>
+
       <svg
-        viewBox={`0 0 ${meshWidth} ${meshHeight}`}
+        viewBox={`${zoomedX} ${zoomedY} ${zoomedWidth} ${zoomedHeight}`}
         width='100%'
-        style={{ maxWidth: 900, border: '1px solid #ddd', borderRadius: 10, background: '#fbfcff' }}
+        style={{ maxWidth: 980, border: '1px solid #ddd', borderRadius: 10, background: '#fbfcff' }}
       >
         {worldOrder.map((w) => {
           const x = worldX.get(w) ?? 120;
@@ -236,17 +315,39 @@ export function App() {
           />
         ))}
 
-        {meshNodes.map((n) => (
-          <g key={n.id}>
-            <circle cx={n.x} cy={n.y} r={n.radius} fill='#4f7cff' fillOpacity={0.85} stroke='#2447bf' strokeWidth={1.2} />
-            <text x={n.x + 12} y={n.y + 4} fontSize={11} fill='#1f2a44'>
-              {n.id.split('/').pop()} ({n.score.toFixed(2)})
-            </text>
-          </g>
-        ))}
+        {meshNodes.map((n) => {
+          const selected = selectedNodeId === n.id;
+          return (
+            <g key={n.id} onClick={() => setSelectedNodeId(n.id)} style={{ cursor: 'pointer' }}>
+              <circle
+                cx={n.x}
+                cy={n.y}
+                r={selected ? n.radius + 2 : n.radius}
+                fill={selected ? '#355ef5' : '#4f7cff'}
+                fillOpacity={0.9}
+                stroke={selected ? '#132f9c' : '#2447bf'}
+                strokeWidth={selected ? 2 : 1.2}
+              />
+              <text x={n.x + 12} y={n.y + 4} fontSize={11} fill='#1f2a44'>
+                {n.id.split('/').pop()} ({n.score.toFixed(2)})
+              </text>
+            </g>
+          );
+        })}
       </svg>
 
       {!meshNodes.length && <p>No entities passed the current calibration threshold.</p>}
+
+      {selectedNode && (
+        <div style={{ marginTop: 10, border: '1px solid #d5deef', borderRadius: 8, padding: 10, maxWidth: 980, background: '#f8faff' }}>
+          <b>Node detail</b>
+          <div>Entity: {selectedNode.id}</div>
+          <div>World: {selectedNode.world}</div>
+          <div>Impact signal: {selectedNode.impact.toFixed(3)}</div>
+          <div>Risk signal: {selectedNode.risk.toFixed(3)}</div>
+          <div>Composite score: {selectedNode.score.toFixed(3)}</div>
+        </div>
+      )}
 
       <ul>
         {ranked.map((n) => (
