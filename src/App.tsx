@@ -29,6 +29,7 @@ type RankedNode = {
 };
 
 type MeshNode = RankedNode & { x: number; y: number; radius: number; idx: number };
+type UnpackedNode = { id: string; parentId: string; world: string; label: string; x: number; y: number; kind: 'counterfactual' | 'simulation' | 'action' };
 
 type GoalPreset = {
   label: string;
@@ -113,6 +114,56 @@ function transitionHow(fromWorld: string, toWorld: string): string {
   return map[key] ?? 'through cross-layer propagation effects';
 }
 
+function practicalActionsForWorld(world: string): string[] {
+  if (world === 'code') return [
+    'Introduce targeted refactors behind feature flags in affected modules.',
+    'Add regression tests around changed interfaces and edge-case fixtures.',
+    'Create migration adapters and deprecation warnings for old call paths.'
+  ];
+  if (world === 'runtime') return [
+    'Add p95/p99 tracing and error-budget SLO alerts before rollout.',
+    'Run canary deployment with auto-rollback guardrails.',
+    'Tune concurrency, caching, and retry policies with load-test evidence.'
+  ];
+  if (world === 'user') return [
+    'Instrument onboarding funnel events at each UX step.',
+    'Ship copy/flow variants behind experiment flags and compare conversion.',
+    'Capture top drop-off reasons and map to backlog fixes.'
+  ];
+  return [
+    'Translate technical change into KPI hypotheses with target deltas.',
+    'Define weekly decision checkpoints tied to adoption/retention metrics.',
+    'Set rollback/continue criteria so teams can act without ambiguity.'
+  ];
+}
+
+function unpackTemplatesForWorld(world: string): Array<{ kind: UnpackedNode['kind']; label: string }> {
+  if (world === 'code') return [
+    { kind: 'counterfactual', label: 'Counterfactual: keep current module boundary' },
+    { kind: 'simulation', label: 'Simulation: integration-test failure blast radius' },
+    { kind: 'action', label: 'Action: refactor adapter + contract tests' },
+    { kind: 'action', label: 'Action: gated rollout by package path' }
+  ];
+  if (world === 'runtime') return [
+    { kind: 'counterfactual', label: 'Counterfactual: current p95 latency stays flat' },
+    { kind: 'simulation', label: 'Simulation: peak-load queue depth + retries' },
+    { kind: 'action', label: 'Action: canary with SLO auto-rollback' },
+    { kind: 'action', label: 'Action: tune cache + worker concurrency' }
+  ];
+  if (world === 'user') return [
+    { kind: 'counterfactual', label: 'Counterfactual: unchanged onboarding drop-off' },
+    { kind: 'simulation', label: 'Simulation: first-value completion uplift' },
+    { kind: 'action', label: 'Action: experiment UX step ordering' },
+    { kind: 'action', label: 'Action: trigger in-app guidance nudges' }
+  ];
+  return [
+    { kind: 'counterfactual', label: 'Counterfactual: no KPI movement this quarter' },
+    { kind: 'simulation', label: 'Simulation: conversion sensitivity by segment' },
+    { kind: 'action', label: 'Action: align roadmap to measured value loops' },
+    { kind: 'action', label: 'Action: enforce KPI-linked release gates' }
+  ];
+}
+
 export function App() {
   const [impactWeight, setImpactWeight] = useState(0.7);
   const [riskWeight, setRiskWeight] = useState(0.3);
@@ -192,20 +243,8 @@ export function App() {
 
   const focusedNodes = useMemo(() => {
     if (!selectedNode) return meshNodes;
-    return meshNodes.map((n) => {
-      const dy = n.y - selectedNode.y;
-      const dx = n.x - selectedNode.x;
-      const isSelected = n.id === selectedNode.id;
-      const isNeighbor = selectedNeighbors.some((s) => s.id === n.id);
-      if (!(isSelected || isNeighbor)) return n;
-      return {
-        ...n,
-        x: selectedNode.x + dx * focusZoom,
-        y: selectedNode.y + dy * focusZoom,
-        radius: isSelected ? n.radius * (1 + 0.2 * focusZoom) : isNeighbor ? n.radius * (1 + 0.12 * focusZoom) : n.radius
-      };
-    });
-  }, [meshNodes, selectedNode, selectedNeighbors, focusZoom]);
+    return meshNodes;
+  }, [meshNodes, selectedNode]);
 
   const focusedById = useMemo(() => new Map(focusedNodes.map((n) => [n.id, n])), [focusedNodes]);
 
@@ -226,6 +265,29 @@ export function App() {
     return counts;
   }, [ranked]);
 
+  const unpackedNodes = useMemo<UnpackedNode[]>(() => {
+    if (!selectedNode) return [];
+    const templates = unpackTemplatesForWorld(selectedNode.world);
+    const levels = Math.max(1, Math.round(focusZoom));
+    const expanded: UnpackedNode[] = [];
+    for (let lvl = 1; lvl <= levels; lvl += 1) {
+      const ring = 48 * lvl;
+      templates.forEach((t, i) => {
+        const angle = (Math.PI * 2 * i) / templates.length;
+        expanded.push({
+          id: `${selectedNode.id}-u-${lvl}-${i}`,
+          parentId: selectedNode.id,
+          world: selectedNode.world,
+          label: `${t.label} L${lvl}`,
+          x: selectedNode.x + Math.cos(angle) * ring,
+          y: selectedNode.y + Math.sin(angle) * ring,
+          kind: t.kind
+        });
+      });
+    }
+    return expanded;
+  }, [selectedNode, focusZoom]);
+
   const overallNarrative = useMemo(() => {
     if (!ranked.length) return 'Current calibration filters out all entities. Relax evidence strictness or risk sensitivity to surface candidate levers.';
     const top = ranked[0];
@@ -241,6 +303,11 @@ export function App() {
       .join('; ');
     return `Contribution mechanism: ${how}.`;
   }, [selectedNode, selectedNeighbors, hopDepth]);
+
+  const practicalActions = useMemo(() => {
+    if (!selectedNode) return [] as string[];
+    return practicalActionsForWorld(selectedNode.world);
+  }, [selectedNode]);
 
   const impactPathNarrative = useMemo(() => {
     if (!selectedNode || !selectedNeighbors.length) return null;
@@ -335,7 +402,7 @@ export function App() {
               <label>Upside emphasis: {impactWeight.toFixed(2)}<input type='range' min={0} max={1} step={0.01} value={impactWeight} onChange={(e) => setImpactWeight(Number(e.target.value))} /></label>
               <label>Risk sensitivity: {riskWeight.toFixed(2)}<input type='range' min={0} max={1} step={0.01} value={riskWeight} onChange={(e) => setRiskWeight(Number(e.target.value))} /></label>
               <label>Evidence strictness: {confidenceThreshold.toFixed(2)}<input type='range' min={0.4} max={0.95} step={0.01} value={confidenceThreshold} onChange={(e) => setConfidenceThreshold(Number(e.target.value))} /></label>
-              <label>Node unpack level: {focusZoom.toFixed(1)}x<input type='range' min={1} max={2.8} step={0.1} value={focusZoom} onChange={(e) => setFocusZoom(Number(e.target.value))} /></label>
+              <label>Node unpack level: {focusZoom.toFixed(1)}x<input type='range' min={1} max={3} step={1} value={focusZoom} onChange={(e) => setFocusZoom(Number(e.target.value))} /></label>
               <div>
                 <button onClick={() => setPan({ x: 0, y: 0 })}>Reset pan</button>
                 <span style={{ marginLeft: 8, color: '#60708f' }}>Drag mesh to pan</span>
@@ -374,6 +441,9 @@ export function App() {
               const active = selectedNode ? (l.from.id === selectedNode.id || l.to.id === selectedNode.id) : false;
               return <line key={i} x1={l.from.x} y1={l.from.y} x2={l.to.x} y2={l.to.y} stroke={active ? '#3f63ff' : '#9fb8ff'} strokeWidth={active ? 2.5 : 1.3} opacity={selectedNode ? (active ? 0.95 : 0.2) : 0.7} />;
             })}
+            {selectedNode && unpackedNodes.map((u) => (
+              <line key={`ul-${u.id}`} x1={selectedNode.x} y1={selectedNode.y} x2={u.x} y2={u.y} stroke={u.kind === 'counterfactual' ? '#f59e0b' : u.kind === 'simulation' ? '#10b981' : '#6366f1'} strokeDasharray='4 3' strokeWidth={1.4} opacity={0.9} />
+            ))}
             {focusedNodes.map((n) => {
               const selected = selectedNodeId === n.id;
               const isNeighbor = selectedNeighbors.some((s) => s.id === n.id);
@@ -384,6 +454,19 @@ export function App() {
                   <circle cx={n.x} cy={n.y} r={selected ? n.radius + 3 : isNeighbor ? n.radius + 1.5 : n.radius} fill={selected ? '#2d55f0' : isNeighbor ? '#6a8bff' : '#4f7cff'} fillOpacity={muted ? 0.22 : 0.9} stroke={selected ? '#132f9c' : '#2447bf'} strokeWidth={selected ? 2.2 : 1.2} />
                   <text x={n.x + 14} y={n.y - 4} fontSize={13} fill={muted ? '#94a1ba' : '#1f2a44'}>
                     {lines.map((line, idx) => <tspan key={idx} x={n.x + 14} dy={idx === 0 ? 0 : 14}>{line}</tspan>)}
+                  </text>
+                </g>
+              );
+            })}
+            {selectedNode && unpackedNodes.map((u) => {
+              const lines = wrapLabel(u.label, 20);
+              const fill = u.kind === 'counterfactual' ? '#fff7e6' : u.kind === 'simulation' ? '#ecfeff' : '#eef2ff';
+              const stroke = u.kind === 'counterfactual' ? '#f59e0b' : u.kind === 'simulation' ? '#10b981' : '#6366f1';
+              return (
+                <g key={u.id}>
+                  <rect x={u.x - 46} y={u.y - 20} width={92} height={40} rx={8} fill={fill} stroke={stroke} strokeWidth={1.2} />
+                  <text x={u.x - 40} y={u.y - 6} fontSize={10} fill='#1f2a44'>
+                    {lines.slice(0, 2).map((line, idx) => <tspan key={idx} x={u.x - 40} dy={idx === 0 ? 0 : 12}>{line}</tspan>)}
                   </text>
                 </g>
               );
@@ -407,6 +490,14 @@ export function App() {
                   <div style={{ marginTop: 6 }}>{nodeNarrative}</div>
                   {impactPathNarrative && <div style={{ marginTop: 8 }}><b>Impact path chain:</b> {impactPathNarrative}</div>}
                   <div style={{ marginTop: 8 }}><b>How it propagates:</b> {selectedNeighbors.length ? selectedNeighbors.map((n) => transitionHow(selectedNode.world, n.world)).join('; ') : 'No propagation path visible at current filters.'}</div>
+                  {practicalActions.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <b>Practical org actions (codebase execution)</b>
+                      <ul>
+                        {practicalActions.map((a, i) => <li key={i}>{a}</li>)}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div>Select a node in the mesh to see mechanism-level impact explanation.</div>
