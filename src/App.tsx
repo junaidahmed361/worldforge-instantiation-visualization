@@ -14,10 +14,27 @@ type WorkUnitEntity = {
   confidence?: number;
 };
 
+type Trajectory = {
+  id: string;
+  name: string;
+  description?: string;
+  expected_benefits?: string[];
+  risks?: string[];
+};
+
+type SimulationReport = {
+  trajectory_id: string;
+  risk?: string;
+  confidence?: number;
+  expected_impact?: Record<string, string>;
+};
+
 type WorkUnit = {
   id: string;
   title?: string;
   impactSurface?: { entities?: WorkUnitEntity[] };
+  trajectories?: Trajectory[];
+  simulationReports?: SimulationReport[];
 };
 
 type RankedNode = {
@@ -50,7 +67,44 @@ const sampleWorkUnit: WorkUnit = {
       { id: 'e4', world: 'business', type: 'kpi', name: 'enterprise_migration_conversion', confidence: 0.79 },
       { id: 'e5', world: 'user', type: 'journey', name: 'first_successful_training_run', confidence: 0.77 }
     ]
-  }
+  },
+  trajectories: [
+    {
+      id: 'traj_onboarding_first',
+      name: 'Onboarding-first migration',
+      description: 'Prioritize docs/tutorial/examples + compatibility guidance to reduce migration friction.',
+      expected_benefits: ['faster developer adoption', 'lower migration confusion'],
+      risks: ['slower infra-level wins']
+    },
+    {
+      id: 'traj_perf_reliability_first',
+      name: 'Performance/reliability-first migration',
+      description: 'Prioritize stability and benchmark evidence for enterprise migration confidence.',
+      expected_benefits: ['stronger production confidence', 'better conversion for performance-sensitive teams'],
+      risks: ['higher engineering complexity']
+    }
+  ],
+  simulationReports: [
+    {
+      trajectory_id: 'traj_onboarding_first',
+      risk: 'low',
+      confidence: 0.68,
+      expected_impact: {
+        migration_adoption: '+8%..+18%',
+        time_to_first_success: '-20%..-35%'
+      }
+    },
+    {
+      trajectory_id: 'traj_perf_reliability_first',
+      risk: 'medium',
+      confidence: 0.66,
+      expected_impact: {
+        enterprise_conversion: '+6%..+14%',
+        p95_latency: '-10%..-22%',
+        training_failure_rate: '-8%..-15%'
+      }
+    }
+  ]
 };
 
 const fallbackNodes = [
@@ -137,31 +191,40 @@ function practicalActionsForWorld(world: string): string[] {
   ];
 }
 
-function unpackTemplatesForWorld(world: string): Array<{ kind: UnpackedNode['kind']; label: string }> {
-  if (world === 'code') return [
-    { kind: 'counterfactual', label: 'Counterfactual: keep current module boundary' },
-    { kind: 'simulation', label: 'Simulation: integration-test failure blast radius' },
-    { kind: 'action', label: 'Action: refactor adapter + contract tests' },
-    { kind: 'action', label: 'Action: gated rollout by package path' }
-  ];
-  if (world === 'runtime') return [
-    { kind: 'counterfactual', label: 'Counterfactual: current p95 latency stays flat' },
-    { kind: 'simulation', label: 'Simulation: peak-load queue depth + retries' },
-    { kind: 'action', label: 'Action: canary with SLO auto-rollback' },
-    { kind: 'action', label: 'Action: tune cache + worker concurrency' }
-  ];
-  if (world === 'user') return [
-    { kind: 'counterfactual', label: 'Counterfactual: unchanged onboarding drop-off' },
-    { kind: 'simulation', label: 'Simulation: first-value completion uplift' },
-    { kind: 'action', label: 'Action: experiment UX step ordering' },
-    { kind: 'action', label: 'Action: trigger in-app guidance nudges' }
-  ];
-  return [
-    { kind: 'counterfactual', label: 'Counterfactual: no KPI movement this quarter' },
-    { kind: 'simulation', label: 'Simulation: conversion sensitivity by segment' },
-    { kind: 'action', label: 'Action: align roadmap to measured value loops' },
-    { kind: 'action', label: 'Action: enforce KPI-linked release gates' }
-  ];
+function worldHint(entityName: string, world: string, t: Trajectory): boolean {
+  const text = `${entityName} ${world} ${t.name} ${t.description ?? ''}`.toLowerCase();
+  if (world === 'code') return /(code|migration|adapter|tutorial|docs|refactor)/.test(text);
+  if (world === 'runtime') return /(runtime|latency|training|stability|benchmark|perf)/.test(text);
+  if (world === 'user') return /(user|onboarding|first|journey|adoption)/.test(text);
+  return /(business|conversion|enterprise|kpi|retention)/.test(text);
+}
+
+function buildUnpackItems(workUnit: WorkUnit | null, selected: MeshNode): Array<{ kind: UnpackedNode['kind']; label: string }> {
+  const out: Array<{ kind: UnpackedNode['kind']; label: string }> = [];
+  const trajectories = workUnit?.trajectories ?? [];
+  const reports = workUnit?.simulationReports ?? [];
+
+  const relevantTraj = trajectories.filter((t) => worldHint(selected.id, selected.world, t));
+  for (const t of relevantTraj) {
+    out.push({ kind: 'counterfactual', label: `Counterfactual: skip ${t.name.toLowerCase()}` });
+    const sim = reports.find((r) => r.trajectory_id === t.id);
+    if (sim?.expected_impact) {
+      for (const [k, v] of Object.entries(sim.expected_impact)) {
+        out.push({ kind: 'simulation', label: `Simulation: ${k} -> ${v}` });
+      }
+    }
+  }
+
+  for (const a of practicalActionsForWorld(selected.world)) {
+    out.push({ kind: 'action', label: `Action: ${a}` });
+  }
+
+  const dedup = new Map<string, { kind: UnpackedNode['kind']; label: string }>();
+  for (const i of out) {
+    const key = `${i.kind}|${i.label}`;
+    if (!dedup.has(key)) dedup.set(key, i);
+  }
+  return Array.from(dedup.values());
 }
 
 export function App() {
@@ -267,26 +330,26 @@ export function App() {
 
   const unpackedNodes = useMemo<UnpackedNode[]>(() => {
     if (!selectedNode) return [];
-    const templates = unpackTemplatesForWorld(selectedNode.world);
+    const items = buildUnpackItems(workUnit, selectedNode);
     const levels = Math.max(1, Math.round(focusZoom));
-    const expanded: UnpackedNode[] = [];
-    for (let lvl = 1; lvl <= levels; lvl += 1) {
-      const ring = 48 * lvl;
-      templates.forEach((t, i) => {
-        const angle = (Math.PI * 2 * i) / templates.length;
-        expanded.push({
-          id: `${selectedNode.id}-u-${lvl}-${i}`,
-          parentId: selectedNode.id,
-          world: selectedNode.world,
-          label: `${t.label} L${lvl}`,
-          x: selectedNode.x + Math.cos(angle) * ring,
-          y: selectedNode.y + Math.sin(angle) * ring,
-          kind: t.kind
-        });
-      });
-    }
-    return expanded;
-  }, [selectedNode, focusZoom]);
+    const perLevel = levels === 1 ? 3 : levels === 2 ? 6 : items.length;
+    const sliced = items.slice(0, Math.max(1, perLevel));
+    if (!sliced.length) return [];
+
+    return sliced.map((t, i) => {
+      const ring = i < 4 ? 56 : i < 8 ? 96 : 132;
+      const angle = (Math.PI * 2 * i) / sliced.length;
+      return {
+        id: `${selectedNode.id}-u-${i}`,
+        parentId: selectedNode.id,
+        world: selectedNode.world,
+        label: t.label,
+        x: selectedNode.x + Math.cos(angle) * ring,
+        y: selectedNode.y + Math.sin(angle) * ring,
+        kind: t.kind
+      };
+    });
+  }, [selectedNode, focusZoom, workUnit]);
 
   const overallNarrative = useMemo(() => {
     if (!ranked.length) return 'Current calibration filters out all entities. Relax evidence strictness or risk sensitivity to surface candidate levers.';
@@ -306,8 +369,11 @@ export function App() {
 
   const practicalActions = useMemo(() => {
     if (!selectedNode) return [] as string[];
-    return practicalActionsForWorld(selectedNode.world);
-  }, [selectedNode]);
+    const fromUnpacked = unpackedNodes
+      .filter((u) => u.kind === 'action')
+      .map((u) => u.label.replace(/^Action:\s*/i, ''));
+    return fromUnpacked.length ? fromUnpacked : practicalActionsForWorld(selectedNode.world);
+  }, [selectedNode, unpackedNodes]);
 
   const impactPathNarrative = useMemo(() => {
     if (!selectedNode || !selectedNeighbors.length) return null;
