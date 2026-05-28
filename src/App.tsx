@@ -20,6 +20,20 @@ type WorkUnit = {
   impactSurface?: { entities?: WorkUnitEntity[] };
 };
 
+const sampleWorkUnit: WorkUnit = {
+  id: 'wu_sample_001',
+  title: 'Sample: TF->PyTorch migration impact work unit',
+  impactSurface: {
+    entities: [
+      { id: 'e1', world: 'code', type: 'file', name: 'docs/migration/tf_to_torch.md', confidence: 0.86 },
+      { id: 'e2', world: 'code', type: 'file', name: 'examples/distributed/ddp_tutorial.py', confidence: 0.82 },
+      { id: 'e3', world: 'runtime', type: 'metric', name: 'p95_training_step_latency', confidence: 0.74 },
+      { id: 'e4', world: 'business', type: 'kpi', name: 'enterprise_migration_conversion', confidence: 0.79 },
+      { id: 'e5', world: 'user', type: 'journey', name: 'first_successful_training_run', confidence: 0.77 }
+    ]
+  }
+};
+
 const fallbackNodes = [
   { id: 'code:modelPool.ts', world: 'code', risk: 0.6, impact: 0.8 },
   { id: 'runtime:p95_latency', world: 'runtime', risk: 0.3, impact: 0.9 },
@@ -105,6 +119,12 @@ export function App() {
     }
   };
 
+  const onLoadSample = () => {
+    setWorkUnit(sampleWorkUnit);
+    setRawJson(JSON.stringify(sampleWorkUnit, null, 2));
+    setError(null);
+  };
+
   return (
     <div style={{ fontFamily: 'Inter, sans-serif', padding: 20 }}>
       <h1>Worldforge Instantiation Visualization</h1>
@@ -125,6 +145,7 @@ export function App() {
           Load file
           <input type='file' accept='application/json,.json' onChange={onLoadFromFile} style={{ display: 'none' }} />
         </label>
+        <button onClick={onLoadSample}>Load sample</button>
       </div>
 
       <textarea
