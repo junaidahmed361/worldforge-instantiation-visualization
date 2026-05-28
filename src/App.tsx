@@ -20,6 +20,14 @@ type WorkUnit = {
   impactSurface?: { entities?: WorkUnitEntity[] };
 };
 
+type RankedNode = {
+  id: string;
+  world: string;
+  risk: number;
+  impact: number;
+  score: number;
+};
+
 const sampleWorkUnit: WorkUnit = {
   id: 'wu_sample_001',
   title: 'Sample: TF->PyTorch migration impact work unit',
@@ -63,12 +71,36 @@ export function App() {
 
   const baseNodes = parsedNodes.length ? parsedNodes : fallbackNodes;
 
-  const ranked = useMemo(() => {
+  const ranked = useMemo<RankedNode[]>(() => {
     return [...baseNodes]
       .map((n) => ({ ...n, score: n.impact * impactWeight - n.risk * riskWeight }))
       .filter((n) => n.score >= confidenceThreshold - 0.5)
       .sort((a, b) => b.score - a.score);
   }, [baseNodes, impactWeight, riskWeight, confidenceThreshold]);
+
+  const worldOrder = ['code', 'runtime', 'user', 'business'];
+  const worldX = new Map(worldOrder.map((w, i) => [w, 120 + i * 180]));
+  const meshWidth = 760;
+  const meshHeight = 420;
+
+  const meshNodes = useMemo(() => {
+    if (!ranked.length) return [];
+    return ranked.map((n, idx) => {
+      const x = worldX.get(n.world) ?? 120;
+      const y = 70 + idx * ((meshHeight - 120) / Math.max(1, ranked.length - 1));
+      const radius = 7 + Math.max(0, n.score) * 10;
+      return { ...n, x, y, radius };
+    });
+  }, [ranked]);
+
+  const meshLinks = useMemo(() => {
+    if (meshNodes.length < 2) return [];
+    const links: Array<{ from: typeof meshNodes[number]; to: typeof meshNodes[number] }> = [];
+    for (let i = 0; i < meshNodes.length - 1; i += 1) {
+      links.push({ from: meshNodes[i], to: meshNodes[i + 1] });
+    }
+    return links;
+  }, [meshNodes]);
 
   const onLoadJson = () => {
     try {
@@ -176,6 +208,46 @@ export function App() {
       </div>
 
       <h2>Potential impact mesh (ranked entities)</h2>
+      <svg
+        viewBox={`0 0 ${meshWidth} ${meshHeight}`}
+        width='100%'
+        style={{ maxWidth: 900, border: '1px solid #ddd', borderRadius: 10, background: '#fbfcff' }}
+      >
+        {worldOrder.map((w) => {
+          const x = worldX.get(w) ?? 120;
+          return (
+            <g key={w}>
+              <line x1={x} y1={30} x2={x} y2={meshHeight - 20} stroke='#e9edf5' strokeWidth={2} />
+              <text x={x} y={20} textAnchor='middle' fontSize={12} fill='#3a4a6a'>{w}</text>
+            </g>
+          );
+        })}
+
+        {meshLinks.map((l, idx) => (
+          <line
+            key={`link_${idx}`}
+            x1={l.from.x}
+            y1={l.from.y}
+            x2={l.to.x}
+            y2={l.to.y}
+            stroke='#9fb8ff'
+            strokeWidth={1 + Math.max(0.4, l.from.score + 0.3)}
+            opacity={0.7}
+          />
+        ))}
+
+        {meshNodes.map((n) => (
+          <g key={n.id}>
+            <circle cx={n.x} cy={n.y} r={n.radius} fill='#4f7cff' fillOpacity={0.85} stroke='#2447bf' strokeWidth={1.2} />
+            <text x={n.x + 12} y={n.y + 4} fontSize={11} fill='#1f2a44'>
+              {n.id.split('/').pop()} ({n.score.toFixed(2)})
+            </text>
+          </g>
+        ))}
+      </svg>
+
+      {!meshNodes.length && <p>No entities passed the current calibration threshold.</p>}
+
       <ul>
         {ranked.map((n) => (
           <li key={n.id}>{n.id} | world={n.world} | score={n.score.toFixed(3)}</li>
