@@ -201,6 +201,15 @@ function worldHint(entityName: string, world: string, t: Trajectory): boolean {
   return /(business|conversion|enterprise|kpi|retention)/.test(text);
 }
 
+function explainImpactMetric(key: string, value: string): string {
+  const k = key.replace(/_/g, ' ');
+  if (/latency|p95|p99/i.test(key)) return `${k}: expected ${value} (lower is better; faster training/inference feedback loop)`;
+  if (/failure|error|crash/i.test(key)) return `${k}: expected ${value} (lower is better; fewer failed runs and rollbacks)`;
+  if (/adoption|conversion|retention|activation/i.test(key)) return `${k}: expected ${value} (higher is better; more teams/users complete migration)`;
+  if (/time_to_first|time to first/i.test(key)) return `${k}: expected ${value} (lower is better; faster first successful outcome)`;
+  return `${k}: expected ${value} (trajectory simulation output)`;
+}
+
 function buildUnpackItems(workUnit: WorkUnit | null, selected: MeshNode): Array<{ kind: UnpackedNode['kind']; label: string }> {
   const out: Array<{ kind: UnpackedNode['kind']; label: string }> = [];
   const trajectories = workUnit?.trajectories ?? [];
@@ -218,7 +227,7 @@ function buildUnpackItems(workUnit: WorkUnit | null, selected: MeshNode): Array<
     const sim = reports.find((r) => r.trajectory_id === t.id);
     if (sim?.expected_impact) {
       for (const [k, v] of Object.entries(sim.expected_impact)) {
-        out.push({ kind: 'simulation', label: `Simulation: ${k} -> ${v}` });
+        out.push({ kind: 'simulation', label: `Simulation result: ${explainImpactMetric(k, v)}` });
       }
     }
   }
@@ -593,6 +602,7 @@ export function App() {
                   )}
                   <div style={{ marginTop: 6 }}>{nodeNarrative}</div>
                   {impactPathNarrative && <div style={{ marginTop: 8 }}><b>Impact path chain:</b> {impactPathNarrative}</div>}
+                  <div style={{ marginTop: 8 }}><b>Subnode legend:</b> Counterfactual = what happens if trajectory is skipped; Simulation result = modeled KPI/technical delta; Action = concrete implementation step.</div>
                   <div style={{ marginTop: 8 }}><b>How it propagates:</b> {selectedNeighbors.length ? selectedNeighbors.map((n) => transitionHow(selectedNode.world, n.world)).join('; ') : 'No propagation path visible at current filters.'}</div>
                   {practicalActions.length > 0 && (
                     <div style={{ marginTop: 10 }}>
