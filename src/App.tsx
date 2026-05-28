@@ -97,6 +97,7 @@ export function App() {
   const [goalMode, setGoalMode] = useState<keyof typeof goalPresets>('balanced');
   const [zoom, setZoom] = useState(1);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [hopDepth, setHopDepth] = useState<1 | 2>(1);
   const [rawJson, setRawJson] = useState('');
   const [jsonUrl, setJsonUrl] = useState('');
   const [workUnit, setWorkUnit] = useState<WorkUnit | null>(null);
@@ -152,10 +153,25 @@ export function App() {
     if (!selectedNode) return [] as MeshNode[];
     const idx = meshNodes.findIndex((n) => n.id === selectedNode.id);
     const out: MeshNode[] = [];
-    if (idx > 0) out.push(meshNodes[idx - 1]);
-    if (idx >= 0 && idx < meshNodes.length - 1) out.push(meshNodes[idx + 1]);
-    return out;
-  }, [meshNodes, selectedNode]);
+
+    const pushAt = (i: number) => {
+      if (i >= 0 && i < meshNodes.length) out.push(meshNodes[i]);
+    };
+
+    pushAt(idx - 1);
+    pushAt(idx + 1);
+    if (hopDepth === 2) {
+      pushAt(idx - 2);
+      pushAt(idx + 2);
+    }
+
+    const seen = new Set<string>();
+    return out.filter((n) => {
+      if (seen.has(n.id)) return false;
+      seen.add(n.id);
+      return true;
+    });
+  }, [meshNodes, selectedNode, hopDepth]);
 
   const worldStats = useMemo(() => {
     const counts = { code: 0, runtime: 0, user: 0, business: 0 } as Record<string, number>;
@@ -177,11 +193,21 @@ export function App() {
     if (!selectedNode) return null;
     const neighborText = selectedNeighbors.length
       ? selectedNeighbors.map((n) => `${n.id.split('/').pop()} (${n.world})`).join(', ')
-      : 'no immediate downstream/upstream neighbors in the current filtered mesh';
+      : `no ${hopDepth}-hop neighbors in the current filtered mesh`;
 
     const confidenceProxy = Math.max(0, Math.min(1, 1 - selectedNode.risk));
-    return `If we invest in ${selectedNode.id}, this node acts in the ${selectedNode.world} layer with upside signal ${selectedNode.impact.toFixed(2)} and delivery confidence ${confidenceProxy.toFixed(2)}. Under the current calibration it ranks at ${selectedNode.score.toFixed(2)}, suggesting ${selectedNode.score > 0.45 ? 'high near-term leverage' : selectedNode.score > 0.2 ? 'moderate but material leverage' : 'exploratory leverage that may need stronger evidence'}. Closest connected nodes now: ${neighborText}.`;
-  }, [selectedNode, selectedNeighbors]);
+    return `If we invest in ${selectedNode.id}, this node acts in the ${selectedNode.world} layer with upside signal ${selectedNode.impact.toFixed(2)} and delivery confidence ${confidenceProxy.toFixed(2)}. Under the current calibration it ranks at ${selectedNode.score.toFixed(2)}, suggesting ${selectedNode.score > 0.45 ? 'high near-term leverage' : selectedNode.score > 0.2 ? 'moderate but material leverage' : 'exploratory leverage that may need stronger evidence'}. Closest connected nodes now (${hopDepth}-hop): ${neighborText}.`;
+  }, [selectedNode, selectedNeighbors, hopDepth]);
+
+  const impactPathNarrative = useMemo(() => {
+    if (!selectedNode) return null;
+    const chain = [selectedNode, ...selectedNeighbors];
+    if (!chain.length) return null;
+    const worldLabel = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+    const path = chain.map((n) => `${n.id.split('/').pop()} [${worldLabel(n.world)}]`).join(' → ');
+    const last = chain[chain.length - 1];
+    return `Impact path (${hopDepth}-hop): ${path}. Working this sequence is expected to propagate influence from ${worldLabel(selectedNode.world)} toward ${worldLabel(last.world)} outcomes under the current calibration.`;
+  }, [selectedNode, selectedNeighbors, hopDepth]);
 
   const applyGoalPreset = (key: keyof typeof goalPresets) => {
     const preset = goalPresets[key];
@@ -327,6 +353,9 @@ export function App() {
         <button onClick={() => setZoom((z) => Math.min(3, Number((z + 0.2).toFixed(2))))}>+</button>
         <input type='range' min={1} max={3} step={0.1} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} style={{ width: 180 }} />
         <span style={{ color: '#5a6a88' }}>Click a node to inspect details</span>
+        <span style={{ marginLeft: 6 }}>Neighborhood:</span>
+        <button onClick={() => setHopDepth(1)} style={{ fontWeight: hopDepth === 1 ? 700 : 400 }}>1-hop</button>
+        <button onClick={() => setHopDepth(2)} style={{ fontWeight: hopDepth === 2 ? 700 : 400 }}>2-hop</button>
       </div>
 
       <svg
@@ -389,6 +418,7 @@ export function App() {
         <div style={{ marginTop: 10, border: '1px solid #d5deef', borderRadius: 8, padding: 10, maxWidth: 980, background: '#f8faff' }}>
           <b>Node impact briefing</b>
           <div style={{ marginTop: 6 }}>{nodeNarrative}</div>
+          {impactPathNarrative && <div style={{ marginTop: 8 }}><b>Impact path chain:</b> {impactPathNarrative}</div>}
           <div style={{ marginTop: 8 }}>Directly connected now: {selectedNeighbors.length || 0}</div>
           <div>Entity: {selectedNode.id}</div>
           <div>World: {selectedNode.world}</div>
