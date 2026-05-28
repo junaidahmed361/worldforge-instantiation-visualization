@@ -36,6 +36,8 @@ type GoalPreset = {
   description: string;
 };
 
+type MeshNode = RankedNode & { x: number; y: number; radius: number };
+
 const sampleWorkUnit: WorkUnit = {
   id: 'wu_sample_001',
   title: 'Sample: TF->PyTorch migration impact work unit',
@@ -125,7 +127,7 @@ export function App() {
   const meshWidth = 760;
   const meshHeight = 420;
 
-  const meshNodes = useMemo(() => {
+  const meshNodes = useMemo<MeshNode[]>(() => {
     if (!ranked.length) return [];
     return ranked.map((n, idx) => {
       const x = worldX.get(n.world) ?? 120;
@@ -145,6 +147,41 @@ export function App() {
   }, [meshNodes]);
 
   const selectedNode = meshNodes.find((n) => n.id === selectedNodeId) ?? null;
+
+  const selectedNeighbors = useMemo(() => {
+    if (!selectedNode) return [] as MeshNode[];
+    const idx = meshNodes.findIndex((n) => n.id === selectedNode.id);
+    const out: MeshNode[] = [];
+    if (idx > 0) out.push(meshNodes[idx - 1]);
+    if (idx >= 0 && idx < meshNodes.length - 1) out.push(meshNodes[idx + 1]);
+    return out;
+  }, [meshNodes, selectedNode]);
+
+  const worldStats = useMemo(() => {
+    const counts = { code: 0, runtime: 0, user: 0, business: 0 } as Record<string, number>;
+    for (const n of ranked) counts[n.world] = (counts[n.world] ?? 0) + 1;
+    return counts;
+  }, [ranked]);
+
+  const overallNarrative = useMemo(() => {
+    if (!ranked.length) {
+      return 'Current calibration is very strict, so no entities pass the decision boundary. Reduce evidence strictness or risk sensitivity to explore more opportunities.';
+    }
+    const top = ranked[0];
+    const avg = ranked.reduce((s, n) => s + n.score, 0) / ranked.length;
+    const mode = goalPresets[goalMode];
+    return `In ${mode.label.toLowerCase()} mode, ${ranked.length} entities are prioritized. The leading candidate is ${top.id} in ${top.world} with score ${top.score.toFixed(2)}. Portfolio average score is ${avg.toFixed(2)}. Coverage split: code ${worldStats.code}, runtime ${worldStats.runtime}, user ${worldStats.user}, business ${worldStats.business}.`;
+  }, [ranked, goalMode, worldStats]);
+
+  const nodeNarrative = useMemo(() => {
+    if (!selectedNode) return null;
+    const neighborText = selectedNeighbors.length
+      ? selectedNeighbors.map((n) => `${n.id.split('/').pop()} (${n.world})`).join(', ')
+      : 'no immediate downstream/upstream neighbors in the current filtered mesh';
+
+    const confidenceProxy = Math.max(0, Math.min(1, 1 - selectedNode.risk));
+    return `If we invest in ${selectedNode.id}, this node acts in the ${selectedNode.world} layer with upside signal ${selectedNode.impact.toFixed(2)} and delivery confidence ${confidenceProxy.toFixed(2)}. Under the current calibration it ranks at ${selectedNode.score.toFixed(2)}, suggesting ${selectedNode.score > 0.45 ? 'high near-term leverage' : selectedNode.score > 0.2 ? 'moderate but material leverage' : 'exploratory leverage that may need stronger evidence'}. Closest connected nodes now: ${neighborText}.`;
+  }, [selectedNode, selectedNeighbors]);
 
   const applyGoalPreset = (key: keyof typeof goalPresets) => {
     const preset = goalPresets[key];
@@ -278,6 +315,11 @@ export function App() {
         </label>
       </div>
 
+      <div style={{ marginTop: 14, border: '1px solid #d5deef', borderRadius: 8, padding: 10, maxWidth: 980, background: '#f8faff' }}>
+        <b>Expected impact narrative (auto-updates with calibration)</b>
+        <div style={{ marginTop: 6 }}>{overallNarrative}</div>
+      </div>
+
       <h2>Potential impact mesh (ranked entities)</h2>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8 }}>
         <button onClick={() => setZoom((z) => Math.max(1, Number((z - 0.2).toFixed(2))))}>-</button>
@@ -302,33 +344,38 @@ export function App() {
           );
         })}
 
-        {meshLinks.map((l, idx) => (
-          <line
-            key={`link_${idx}`}
-            x1={l.from.x}
-            y1={l.from.y}
-            x2={l.to.x}
-            y2={l.to.y}
-            stroke='#9fb8ff'
-            strokeWidth={1 + Math.max(0.4, l.from.score + 0.3)}
-            opacity={0.7}
-          />
-        ))}
+        {meshLinks.map((l, idx) => {
+          const linkTouchesSelection = selectedNode ? (l.from.id === selectedNode.id || l.to.id === selectedNode.id) : false;
+          return (
+            <line
+              key={`link_${idx}`}
+              x1={l.from.x}
+              y1={l.from.y}
+              x2={l.to.x}
+              y2={l.to.y}
+              stroke={linkTouchesSelection ? '#3f63ff' : '#9fb8ff'}
+              strokeWidth={(linkTouchesSelection ? 2.4 : 1) + Math.max(0.3, l.from.score + 0.2)}
+              opacity={selectedNode ? (linkTouchesSelection ? 0.95 : 0.25) : 0.7}
+            />
+          );
+        })}
 
         {meshNodes.map((n) => {
           const selected = selectedNodeId === n.id;
+          const isNeighbor = selectedNeighbors.some((s) => s.id === n.id);
+          const muted = selectedNode ? !(selected || isNeighbor) : false;
           return (
             <g key={n.id} onClick={() => setSelectedNodeId(n.id)} style={{ cursor: 'pointer' }}>
               <circle
                 cx={n.x}
                 cy={n.y}
-                r={selected ? n.radius + 2 : n.radius}
-                fill={selected ? '#355ef5' : '#4f7cff'}
-                fillOpacity={0.9}
+                r={selected ? n.radius + 3 : isNeighbor ? n.radius + 1.5 : n.radius}
+                fill={selected ? '#2d55f0' : isNeighbor ? '#6a8bff' : '#4f7cff'}
+                fillOpacity={muted ? 0.25 : 0.9}
                 stroke={selected ? '#132f9c' : '#2447bf'}
-                strokeWidth={selected ? 2 : 1.2}
+                strokeWidth={selected ? 2.2 : 1.2}
               />
-              <text x={n.x + 12} y={n.y + 4} fontSize={11} fill='#1f2a44'>
+              <text x={n.x + 12} y={n.y + 4} fontSize={11} fill={muted ? '#94a1ba' : '#1f2a44'}>
                 {n.id.split('/').pop()} ({n.score.toFixed(2)})
               </text>
             </g>
@@ -340,7 +387,9 @@ export function App() {
 
       {selectedNode && (
         <div style={{ marginTop: 10, border: '1px solid #d5deef', borderRadius: 8, padding: 10, maxWidth: 980, background: '#f8faff' }}>
-          <b>Node detail</b>
+          <b>Node impact briefing</b>
+          <div style={{ marginTop: 6 }}>{nodeNarrative}</div>
+          <div style={{ marginTop: 8 }}>Directly connected now: {selectedNeighbors.length || 0}</div>
           <div>Entity: {selectedNode.id}</div>
           <div>World: {selectedNode.world}</div>
           <div>Impact signal: {selectedNode.impact.toFixed(3)}</div>
