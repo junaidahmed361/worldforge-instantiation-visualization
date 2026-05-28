@@ -122,6 +122,9 @@ export function App() {
   const [focusZoom, setFocusZoom] = useState(1);
   const [hopDepth, setHopDepth] = useState<1 | 2>(1);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [lastPointer, setLastPointer] = useState<{ x: number; y: number } | null>(null);
 
   const [leftPaneOpen, setLeftPaneOpen] = useState(true);
   const [rightPaneOpen, setRightPaneOpen] = useState(true);
@@ -160,7 +163,7 @@ export function App() {
     return ranked.map((n, idx) => {
       const x = worldX.get(n.world) ?? 120;
       const y = 80 + idx * ((meshHeight - 150) / Math.max(1, ranked.length - 1));
-      const radius = 8 + Math.max(0, n.score) * 10;
+      const radius = 11 + Math.max(0, n.score) * 14;
       return { ...n, x, y, radius, idx };
     });
   }, [ranked]);
@@ -199,7 +202,7 @@ export function App() {
         ...n,
         x: selectedNode.x + dx * focusZoom,
         y: selectedNode.y + dy * focusZoom,
-        radius: isSelected ? n.radius + 2 : n.radius + 1
+        radius: isSelected ? n.radius * (1 + 0.2 * focusZoom) : isNeighbor ? n.radius * (1 + 0.12 * focusZoom) : n.radius
       };
     });
   }, [meshNodes, selectedNode, selectedNeighbors, focusZoom]);
@@ -332,8 +335,13 @@ export function App() {
               <label>Upside emphasis: {impactWeight.toFixed(2)}<input type='range' min={0} max={1} step={0.01} value={impactWeight} onChange={(e) => setImpactWeight(Number(e.target.value))} /></label>
               <label>Risk sensitivity: {riskWeight.toFixed(2)}<input type='range' min={0} max={1} step={0.01} value={riskWeight} onChange={(e) => setRiskWeight(Number(e.target.value))} /></label>
               <label>Evidence strictness: {confidenceThreshold.toFixed(2)}<input type='range' min={0.4} max={0.95} step={0.01} value={confidenceThreshold} onChange={(e) => setConfidenceThreshold(Number(e.target.value))} /></label>
-              <label>Node unpack level: {focusZoom.toFixed(1)}x<input type='range' min={1} max={2.4} step={0.1} value={focusZoom} onChange={(e) => setFocusZoom(Number(e.target.value))} /></label>
-              <div>Neighborhood:
+              <label>Node unpack level: {focusZoom.toFixed(1)}x<input type='range' min={1} max={2.8} step={0.1} value={focusZoom} onChange={(e) => setFocusZoom(Number(e.target.value))} /></label>
+              <div>
+                <button onClick={() => setPan({ x: 0, y: 0 })}>Reset pan</button>
+                <span style={{ marginLeft: 8, color: '#60708f' }}>Drag mesh to pan</span>
+              </div>
+              <div>
+                Neighborhood:
                 <button onClick={() => setHopDepth(1)} style={{ marginLeft: 8, fontWeight: hopDepth === 1 ? 700 : 400 }}>1-hop</button>
                 <button onClick={() => setHopDepth(2)} style={{ marginLeft: 6, fontWeight: hopDepth === 2 ? 700 : 400 }}>2-hop</button>
               </div>
@@ -342,10 +350,25 @@ export function App() {
         </aside>
 
         <div>
-          <svg viewBox={`0 0 ${meshWidth} ${meshHeight}`} width='100%' style={{ border: '1px solid #ddd', borderRadius: 10, background: '#fbfcff', maxHeight: 560 }}>
+          <svg
+            viewBox={`0 0 ${meshWidth} ${meshHeight}`}
+            width='100%'
+            style={{ border: '1px solid #ddd', borderRadius: 10, background: '#fbfcff', maxHeight: 560, cursor: dragging ? 'grabbing' : 'grab' }}
+            onMouseDown={(e) => { setDragging(true); setLastPointer({ x: e.clientX, y: e.clientY }); }}
+            onMouseUp={() => { setDragging(false); setLastPointer(null); }}
+            onMouseLeave={() => { setDragging(false); setLastPointer(null); }}
+            onMouseMove={(e) => {
+              if (!dragging || !lastPointer) return;
+              const dx = e.clientX - lastPointer.x;
+              const dy = e.clientY - lastPointer.y;
+              setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+              setLastPointer({ x: e.clientX, y: e.clientY });
+            }}
+          >
+            <g transform={`translate(${pan.x} ${pan.y})`}>
             {worldOrder.map((w) => {
               const x = worldX.get(w) ?? 120;
-              return <g key={w}><line x1={x} y1={30} x2={x} y2={meshHeight - 20} stroke='#e9edf5' strokeWidth={2} /><text x={x} y={20} textAnchor='middle' fontSize={12} fill='#3a4a6a'>{w}</text></g>;
+              return <g key={w}><line x1={x} y1={30} x2={x} y2={meshHeight - 20} stroke='#e9edf5' strokeWidth={2} /><text x={x} y={20} textAnchor='middle' fontSize={14} fill='#3a4a6a'>{w}</text></g>;
             })}
             {meshLinks.map((l, i) => {
               const active = selectedNode ? (l.from.id === selectedNode.id || l.to.id === selectedNode.id) : false;
@@ -355,16 +378,17 @@ export function App() {
               const selected = selectedNodeId === n.id;
               const isNeighbor = selectedNeighbors.some((s) => s.id === n.id);
               const muted = selectedNode ? !(selected || isNeighbor) : false;
-              const lines = wrapLabel(nodeShortLabel(n.id));
+              const lines = wrapLabel(nodeShortLabel(n.id), selected || isNeighbor ? 22 : 16);
               return (
                 <g key={n.id} onClick={() => setSelectedNodeId(n.id)} style={{ cursor: 'pointer' }}>
                   <circle cx={n.x} cy={n.y} r={selected ? n.radius + 3 : isNeighbor ? n.radius + 1.5 : n.radius} fill={selected ? '#2d55f0' : isNeighbor ? '#6a8bff' : '#4f7cff'} fillOpacity={muted ? 0.22 : 0.9} stroke={selected ? '#132f9c' : '#2447bf'} strokeWidth={selected ? 2.2 : 1.2} />
-                  <text x={n.x + 12} y={n.y - 2} fontSize={11} fill={muted ? '#94a1ba' : '#1f2a44'}>
-                    {lines.map((line, idx) => <tspan key={idx} x={n.x + 12} dy={idx === 0 ? 0 : 12}>{line}</tspan>)}
+                  <text x={n.x + 14} y={n.y - 4} fontSize={13} fill={muted ? '#94a1ba' : '#1f2a44'}>
+                    {lines.map((line, idx) => <tspan key={idx} x={n.x + 14} dy={idx === 0 ? 0 : 14}>{line}</tspan>)}
                   </text>
                 </g>
               );
             })}
+            </g>
           </svg>
           {!focusedNodes.length && <p>No entities passed the current calibration threshold.</p>}
         </div>
