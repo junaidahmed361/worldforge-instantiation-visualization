@@ -374,6 +374,29 @@ export function App() {
     return `Contribution mechanism: ${how}.`;
   }, [selectedNode, selectedNeighbors, hopDepth]);
 
+  const selectedEntity = useMemo(() => {
+    if (!selectedNode) return null;
+    return (workUnit?.impactSurface?.entities ?? []).find((e) => e.name === selectedNode.id) ?? null;
+  }, [selectedNode, workUnit]);
+
+  const mappingInspector = useMemo(() => {
+    if (!selectedEntity) return null;
+    const trajectories = workUnit?.trajectories ?? [];
+    const reports = workUnit?.simulationReports ?? [];
+    const linkedTrajectoryIds = selectedEntity.trajectoryIds?.length
+      ? selectedEntity.trajectoryIds
+      : trajectories.filter((t) => worldHint(selectedEntity.name, selectedEntity.world, t)).map((t) => t.id);
+    const linkedSimulationImpacts = linkedTrajectoryIds.reduce((acc, tid) => {
+      const report = reports.find((r) => r.trajectory_id === tid);
+      return acc + Object.keys(report?.expected_impact ?? {}).length;
+    }, 0);
+    return {
+      entityId: selectedEntity.id,
+      trajectoryIds: linkedTrajectoryIds,
+      simulationImpactCount: linkedSimulationImpacts
+    };
+  }, [selectedEntity, workUnit]);
+
   const practicalActions = useMemo(() => {
     if (!selectedNode) return [] as string[];
     const fromUnpacked = unpackedNodes
@@ -560,6 +583,14 @@ export function App() {
               {selectedNode ? (
                 <div>
                   <b>Node impact briefing</b>
+                  {mappingInspector && (
+                    <div style={{ marginTop: 8, background: '#eef3ff', border: '1px solid #cfdcff', borderRadius: 8, padding: 8, fontSize: 12 }}>
+                      <div><b>Mapping inspector</b></div>
+                      <div>Entity id: {mappingInspector.entityId}</div>
+                      <div>Linked trajectories: {mappingInspector.trajectoryIds.length ? mappingInspector.trajectoryIds.join(', ') : 'none'}</div>
+                      <div>Simulation impacts pulled: {mappingInspector.simulationImpactCount}</div>
+                    </div>
+                  )}
                   <div style={{ marginTop: 6 }}>{nodeNarrative}</div>
                   {impactPathNarrative && <div style={{ marginTop: 8 }}><b>Impact path chain:</b> {impactPathNarrative}</div>}
                   <div style={{ marginTop: 8 }}><b>How it propagates:</b> {selectedNeighbors.length ? selectedNeighbors.map((n) => transitionHow(selectedNode.world, n.world)).join('; ') : 'No propagation path visible at current filters.'}</div>
@@ -573,7 +604,7 @@ export function App() {
                   )}
                 </div>
               ) : (
-                <div>Select a node in the mesh to see mechanism-level impact explanation.</div>
+                <div>Select a node to inspect node-level propagation and actions.</div>
               )}
             </div>
           )}
