@@ -12,6 +12,8 @@ type WorkUnitEntity = {
   type: string;
   name: string;
   confidence?: number;
+  trajectoryIds?: string[];
+  plannedActions?: string[];
 };
 
 type Trajectory = {
@@ -61,11 +63,11 @@ const sampleWorkUnit: WorkUnit = {
   title: 'Sample: TF->PyTorch migration impact work unit',
   impactSurface: {
     entities: [
-      { id: 'e1', world: 'code', type: 'file', name: 'docs/migration/tf_to_torch.md', confidence: 0.86 },
-      { id: 'e2', world: 'code', type: 'file', name: 'examples/distributed/ddp_tutorial.py', confidence: 0.82 },
-      { id: 'e3', world: 'runtime', type: 'metric', name: 'p95_training_step_latency', confidence: 0.74 },
-      { id: 'e4', world: 'business', type: 'kpi', name: 'enterprise_migration_conversion', confidence: 0.79 },
-      { id: 'e5', world: 'user', type: 'journey', name: 'first_successful_training_run', confidence: 0.77 }
+      { id: 'e1', world: 'code', type: 'file', name: 'docs/migration/tf_to_torch.md', confidence: 0.86, trajectoryIds: ['traj_onboarding_first'], plannedActions: ['Refactor this module behind a feature flag and keep old path as fallback.', 'Add contract/regression tests before cutover.'] },
+      { id: 'e2', world: 'code', type: 'file', name: 'examples/distributed/ddp_tutorial.py', confidence: 0.82, trajectoryIds: ['traj_onboarding_first', 'traj_perf_reliability_first'], plannedActions: ['Ship adapter layer for TensorFlow->PyTorch compatibility.', 'Benchmark before/after and set automatic rollback thresholds.'] },
+      { id: 'e3', world: 'runtime', type: 'metric', name: 'p95_training_step_latency', confidence: 0.74, trajectoryIds: ['traj_perf_reliability_first'], plannedActions: ['Canary rollout with p95/p99 and failure-rate guardrails.', 'Tune worker concurrency and caching for hot paths.'] },
+      { id: 'e4', world: 'business', type: 'kpi', name: 'enterprise_migration_conversion', confidence: 0.79, trajectoryIds: ['traj_perf_reliability_first'], plannedActions: ['Tie rollout to KPI checkpoints and weekly decision gates.'] },
+      { id: 'e5', world: 'user', type: 'journey', name: 'first_successful_training_run', confidence: 0.77, trajectoryIds: ['traj_onboarding_first'], plannedActions: ['Instrument first-success journey and onboarding drop-off.'] }
     ]
   },
   trajectories: [
@@ -203,9 +205,15 @@ function buildUnpackItems(workUnit: WorkUnit | null, selected: MeshNode): Array<
   const out: Array<{ kind: UnpackedNode['kind']; label: string }> = [];
   const trajectories = workUnit?.trajectories ?? [];
   const reports = workUnit?.simulationReports ?? [];
+  const entity = (workUnit?.impactSurface?.entities ?? []).find((e) => e.name === selected.id);
 
-  const relevantTraj = trajectories.filter((t) => worldHint(selected.id, selected.world, t));
-  for (const t of relevantTraj) {
+  const linkedIds = entity?.trajectoryIds?.length
+    ? entity.trajectoryIds
+    : trajectories.filter((t) => worldHint(selected.id, selected.world, t)).map((t) => t.id);
+
+  for (const trajId of linkedIds) {
+    const t = trajectories.find((x) => x.id === trajId);
+    if (!t) continue;
     out.push({ kind: 'counterfactual', label: `Counterfactual: skip ${t.name.toLowerCase()}` });
     const sim = reports.find((r) => r.trajectory_id === t.id);
     if (sim?.expected_impact) {
@@ -215,9 +223,8 @@ function buildUnpackItems(workUnit: WorkUnit | null, selected: MeshNode): Array<
     }
   }
 
-  for (const a of practicalActionsForWorld(selected.world)) {
-    out.push({ kind: 'action', label: `Action: ${a}` });
-  }
+  const entityActions = entity?.plannedActions?.length ? entity.plannedActions : practicalActionsForWorld(selected.world);
+  for (const a of entityActions) out.push({ kind: 'action', label: `Action: ${a}` });
 
   const dedup = new Map<string, { kind: UnpackedNode['kind']; label: string }>();
   for (const i of out) {
